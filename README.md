@@ -50,7 +50,7 @@ How to Install
 --------------
 
 ```
-go get github.com/Maki-Daisuke/klose
+go get github.com/Maki-Daisuke/qlose
 ```
 
 
