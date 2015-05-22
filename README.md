@@ -76,7 +76,9 @@ it will be nil.
 - `prio` is is out of bound
 - `q` is already stopped
 
-### `func (q *Qlose) Stop() <-chan struct{}`
+### `func (q *Qlose) Stop() <-chan *Task`
 
 Stop all workers of this Qlose. Once Qlose is stopped, it can never be restarted.
-The returned channel is closed when all workers end.
+
+`Stop` returns a channel that sends rest of tasks in priority order and it is
+closed when all workers end.

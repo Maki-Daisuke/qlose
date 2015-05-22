@@ -91,15 +91,25 @@ LOOP:
 	}
 }
 
-func (q *Qlose) Stop() <-chan struct{} {
-	r := make(chan struct{})
+func (q *Qlose) Stop() <-chan *Task {
 	if !atomic.CompareAndSwapInt32(&q.isWorking, WORKING, NOT_WORKING) {
 		// workers are already stopped by someone else.
+		r := make(chan *Task)
 		close(r)
 		return r
 	}
 	close(q.quit)
+	l := 0
+	for _, c := range q.queues {
+		l += len(c)
+	}
+	r := make(chan *Task, l)
 	go func() {
+		for _, c := range q.queues {
+			for t := range c {
+				r <- t
+			}
+		}
 		q.allDone.Wait()
 		close(r)
 	}()
