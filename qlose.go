@@ -2,48 +2,86 @@ package qlose
 
 import (
 	"fmt"
+	"runtime"
 	"sync"
+	"sync/atomic"
 )
 
 const MAX_PRIORITY uint = 9
 
-type Qlose struct {
-	quit_chan   chan struct{}
-	notify_chan chan struct{}
-	queues      [MAX_PRIORITY + 1]chan func()
-	allDone     *sync.WaitGroup
+type Task struct {
+	Priority uint
+	Run      func() interface{}
+	end_chan chan interface{}
 }
 
-func New(num_of_workers int, buffer_size uint) *Qlose {
+func newTask(p uint, f func() interface{}) *Task {
+	return &Task{
+		Priority: p,
+		Run:      f,
+		end_chan: make(chan interface{}, 1),
+	}
+}
+
+const (
+	NOT_WORKING = 1
+	WORKING     = 0
+)
+
+type Qlose struct {
+	isWorking int32 // 1: working, 0: not working
+	quit      chan struct{}
+	notify    chan struct{}
+	queues    [MAX_PRIORITY + 1]chan *Task
+	allDone   *sync.WaitGroup
+}
+
+func New(num_of_workers uint, buf_size uint) *Qlose {
 	q := &Qlose{
-		quit_chan:   make(chan struct{}),
-		notify_chan: make(chan struct{}, buffer_size),
-		allDone:     &sync.WaitGroup{},
+		isWorking: WORKING,
+		quit:      make(chan struct{}),
+		notify:    make(chan struct{}, buf_size),
+		allDone:   &sync.WaitGroup{},
 	}
 	var i uint
 	for i = 0; i <= MAX_PRIORITY; i++ {
-		q.queues[i] = make(chan func(), buffer_size)
+		q.queues[i] = make(chan *Task, buf_size)
 	}
-	for i := 0; i < num_of_workers; i++ {
-		go q.work()
+	for i := uint(0); i < num_of_workers; i++ {
+		go q.work(q.quit, q.allDone)
 	}
+	runtime.SetFinalizer(q, func(q *Qlose) {
+		<-q.Stop()
+	})
 	return q
 }
 
-func (q *Qlose) work() {
-	q.allDone.Add(1)
+func (q *Qlose) work(quit chan struct{}, allDone *sync.WaitGroup) {
+	allDone.Add(1)
+	defer allDone.Done()
 LOOP:
 	for {
 		select {
-		case <-q.quit_chan:
-			q.allDone.Done()
+		case <-quit:
 			break LOOP
-		case <-q.notify_chan:
+		case <-q.notify:
+			if atomic.LoadInt32(&q.isWorking) == NOT_WORKING {
+				break LOOP
+			}
 			var i uint
 			for i = 0; i <= MAX_PRIORITY; i++ {
 				select {
 				case t := <-q.queues[i]:
-					t()
+					func() { // scope for defer
+						defer func() {
+							if x := recover(); x != nil {
+								t.end_chan <- x
+							}
+							close(t.end_chan)
+						}()
+						r := t.Run()
+						t.end_chan <- r
+					}()
 					continue LOOP
 				default:
 					// Just for avoiding blocking.
@@ -53,31 +91,30 @@ LOOP:
 	}
 }
 
-func (q *Qlose) Enqueue(prio uint, task func() interface{}) <-chan interface{} {
-	if prio > 9 {
-		panic(fmt.Sprintf("`prio (=%d)` is out of bound", prio))
-	}
-	end_chan := make(chan interface{}, 1)
-	q.queues[prio] <- func() {
-		defer func() {
-			if x := recover(); x != nil {
-				end_chan <- x
-			}
-			close(end_chan)
-		}()
-		r := task()
-		end_chan <- r
-	}
-	q.notify_chan <- struct{}{}
-	return end_chan
-}
-
 func (q *Qlose) Stop() <-chan struct{} {
-	close(q.quit_chan)
-	c := make(chan struct{})
+	r := make(chan struct{})
+	if !atomic.CompareAndSwapInt32(&q.isWorking, WORKING, NOT_WORKING) {
+		// workers are already stopped by someone else.
+		close(r)
+		return r
+	}
+	close(q.quit)
 	go func() {
 		q.allDone.Wait()
-		close(c)
+		close(r)
 	}()
-	return c
+	return r
+}
+
+func (q *Qlose) Enqueue(p uint, f func() interface{}) (<-chan interface{}, error) {
+	if p > MAX_PRIORITY {
+		return nil, fmt.Errorf("`prio (=%d)` is out of bound", p)
+	}
+	if atomic.LoadInt32(&q.isWorking) != WORKING {
+		return nil, fmt.Errorf("queue is already stopped")
+	}
+	t := newTask(p, f)
+	q.queues[p] <- t
+	q.notify <- struct{}{}
+	return t.end_chan, nil
 }

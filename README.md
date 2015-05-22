@@ -24,11 +24,15 @@ import (
 q := qlose.New(runtime.NumCPU, 100)  // Specify number of workers and buffer size
 
 // A task is just a function with signature "func()interface{}".
-p := q.Enqueue(5, fun()error{
+p, err := q.Enqueue(5, fun()error{
   cmd := exec.Command("a long running command")
   err := cmd.Run()  // Take long time
   retutn err
 })
+if err !=nil {
+  fmt.Println("can't enqueue somehow: %v", err)
+}
+
 
 // This task is prioritized over the former.
 q.Enqueue(0, fun()error{
@@ -61,10 +65,16 @@ API
 
 Create new Qlose and start speficied number of workers.
 
-### `func (q *Qlose) Enqueue(prio uint, task func()interface{}) (<-chan interface{}, error)`
+### `func (q *Qlose) Enqueue(prio uint, task func()interface{}) (promise <-chan interface{}, err error)`
 
 Enqueue `task` with priority `prio`, where 0 is the highest priority and 9 is
-the lowest. If `prio` is our of bound, it will return error.
+the lowest. You can wait and retrieve the result of task by receiving from the
+returned channel `primise`. `primise` will be sent just a single value and closed.
+Return value `err` will be non-nil value in the following situations, otherwise
+it will be nil.
+
+- `prio` is is out of bound
+- `q` is already stopped
 
 ### `func (q *Qlose) Stop() <-chan struct{}`
 

@@ -21,13 +21,13 @@ func TestSingleWorker(t *testing.T) {
 	})
 
 	var p [7]<-chan interface{}
-	p[0] = q.Enqueue(0, task(0))
-	p[1] = q.Enqueue(5, task(1))
-	p[2] = q.Enqueue(5, task(2))
-	p[3] = q.Enqueue(5, task(3))
-	p[4] = q.Enqueue(1, task(4))
-	p[5] = q.Enqueue(1, task(5))
-	p[6] = q.Enqueue(1, task(6))
+	p[0], _ = q.Enqueue(0, task(0))
+	p[1], _ = q.Enqueue(5, task(1))
+	p[2], _ = q.Enqueue(5, task(2))
+	p[3], _ = q.Enqueue(5, task(3))
+	p[4], _ = q.Enqueue(1, task(4))
+	p[5], _ = q.Enqueue(1, task(5))
+	p[6], _ = q.Enqueue(1, task(6))
 
 	close(stopper)
 
